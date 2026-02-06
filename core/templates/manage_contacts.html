@@ -1,0 +1,107 @@
+{% extends 'base.html' %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><a href="{% url 'dashboard' %}" class="text-decoration-none text-dark"><i class="bi bi-arrow-left"></i></a> Manage Contacts</h2>
+    <div>
+        <form action="{% url 'delete_all_contacts' %}" method="POST" class="d-inline" onsubmit="return confirm('Are you sure you want to delete ALL contacts?');">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-outline-danger me-2"><i class="bi bi-trash"></i> Delete All</button>
+        </form>
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addModal">
+            <i class="bi bi-person-plus"></i> Add New
+        </button>
+    </div>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-body p-0">
+        <div class="table-responsive" style="max-height: 70vh;">
+            <table class="table table-hover mb-0 align-middle">
+                <thead class="table-light sticky-top">
+                    <tr>
+                        <th>Name</th>
+                        <th>Email</th>
+                        <th>College</th>
+                        <th>Year</th>
+                        <th>Event</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for c in contacts %}
+                    <tr>
+                        <td class="fw-bold">{{ c.name }}</td>
+                        <td>{{ c.email }}</td>
+                        <td>{{ c.college }}</td>
+                        <td>{{ c.year }}</td>
+                        <td><span class="badge bg-info text-dark">{{ c.event_name }}</span></td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editModal{{ c.id }}">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            <a href="{% url 'delete_contact' c.id %}" class="btn btn-sm btn-outline-danger" onclick="return confirm('Delete this contact?');">
+                                <i class="bi bi-x-lg"></i>
+                            </a>
+                        </td>
+                    </tr>
+
+                    <div class="modal fade" id="editModal{{ c.id }}" tabindex="-1">
+                        <div class="modal-dialog">
+                            <div class="modal-content">
+                                <form action="{% url 'edit_contact' c.id %}" method="POST">
+                                    {% csrf_token %}
+                                    <div class="modal-header">
+                                        <h5 class="modal-title">Edit Contact</h5>
+                                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                    </div>
+                                    <div class="modal-body">
+                                        <div class="mb-2"><label>Name</label><input type="text" name="name" value="{{ c.name }}" class="form-control" required></div>
+                                        <div class="mb-2"><label>Email</label><input type="email" name="email" value="{{ c.email }}" class="form-control" required></div>
+                                        <div class="mb-2"><label>College</label><input type="text" name="college" value="{{ c.college }}" class="form-control"></div>
+                                        <div class="mb-2"><label>Year</label><input type="text" name="year" value="{{ c.year }}" class="form-control"></div>
+                                        <div class="mb-2"><label>Mobile</label><input type="text" name="mobile" value="{{ c.mobile }}" class="form-control"></div>
+                                        <div class="mb-2"><label>Event</label><input type="text" name="event_name" value="{{ c.event_name }}" class="form-control"></div>
+                                    </div>
+                                    <div class="modal-footer">
+                                        <button type="submit" class="btn btn-primary">Save Changes</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                    {% empty %}
+                    <tr><td colspan="6" class="text-center p-4">No contacts found. Upload Excel or Add New.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="addModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form action="{% url 'add_contact' %}" method="POST">
+                {% csrf_token %}
+                <div class="modal-header">
+                    <h5 class="modal-title">Add New Contact</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-2"><label>Name</label><input type="text" name="name" class="form-control" required></div>
+                    <div class="mb-2"><label>Email</label><input type="email" name="email" class="form-control" required></div>
+                    <div class="mb-2"><label>College</label><input type="text" name="college" class="form-control"></div>
+                    <div class="mb-2"><label>Year</label><input type="text" name="year" class="form-control"></div>
+                    <div class="mb-2"><label>Mobile</label><input type="text" name="mobile" class="form-control"></div>
+                    <div class="mb-2"><label>Event</label><input type="text" name="event_name" class="form-control"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="submit" class="btn btn-success">Add Contact</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{% endblock %}  

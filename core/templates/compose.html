@@ -1,0 +1,163 @@
+{% extends 'base.html' %}
+{% block content %}
+<link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
+
+<style>
+    /* Tag Styling */
+    .mention-chip {
+        background-color: #d1e7dd; color: #0f5132; padding: 2px 8px;
+        border-radius: 12px; font-weight: 600; font-size: 0.9em;
+        display: inline-block; margin: 0 2px; border: 1px solid #badbcc;
+        cursor: default; user-select: none;
+    }
+    /* Editor Spacing Fix */
+    .ql-editor p { margin: 0 !important; line-height: 1.4 !important; }
+    
+    /* Recipient Box Scrollbar */
+    .recipient-box {
+        max-height: 400px;
+        overflow-y: auto;
+        border: 1px solid #dee2e6;
+        border-radius: 5px;
+    }
+</style>
+
+<form method="POST" id="composeForm">
+    {% csrf_token %}
+    <div class="row">
+        <div class="col-md-7">
+            <div class="card p-4 shadow-sm h-100">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h4 class="mb-0">📧 Compose Email</h4>
+                    <small id="saveStatus" class="text-muted fst-italic">Draft empty</small>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Subject</label>
+                    <input type="text" id="subjectInput" name="subject" class="form-control" placeholder="Ex: Invitation..." required>
+                </div>
+                
+                <div class="mb-2">
+                    <div class="d-flex gap-2">
+                        <button type="button" class="btn btn-sm btn-outline-success rounded-pill" onclick="addTag('Name')">@Name</button>
+                        <button type="button" class="btn btn-sm btn-outline-success rounded-pill" onclick="addTag('College')">@College</button>
+                        <button type="button" class="btn btn-sm btn-outline-success rounded-pill" onclick="addTag('Year')">@Year</button>
+                        <button type="button" class="btn btn-sm btn-outline-success rounded-pill" onclick="addTag('Event')">@Event</button>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Message</label>
+                    <div id="editor" style="height: 300px; font-size: 16px;"></div>
+                    <input type="hidden" name="body" id="hiddenBody">
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-5">
+            <div class="card shadow-sm h-100">
+                <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0">Select Recipients</h6>
+                    <span class="badge bg-primary" id="countBadge">{{ recipients|length }} Selected</span>
+                </div>
+                
+                <div class="p-2 border-bottom">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="selectAll" checked onchange="toggleAll(this)">
+                        <label class="form-check-label fw-bold" for="selectAll">Select / Deselect All</label>
+                    </div>
+                </div>
+
+                <div class="recipient-box p-0">
+                    <table class="table table-hover mb-0 table-sm small">
+                        <tbody id="recipientTable">
+                            {% for r in recipients %}
+                            <tr>
+                                <td style="width: 30px;" class="text-center">
+                                    <input type="checkbox" name="selected_ids" value="{{ r.id }}" class="form-check-input user-checkbox" checked onchange="updateCount()">
+                                </td>
+                                <td>
+                                    <strong>{{ r.name }}</strong><br>
+                                    <span class="text-muted">{{ r.email }}</span>
+                                </td>
+                                <td class="text-end text-muted">
+                                    {{ r.college|truncatechars:15 }}
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="3" class="text-center p-3">No contacts found. Upload Excel first.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div class="card-footer bg-white p-3">
+                    <button type="submit" class="btn btn-primary w-100 py-2 fw-bold">
+                        <i class="bi bi-send-fill"></i> Send to Selected
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</form>
+
+<script src="https://cdn.quilljs.com/1.3.6/quill.js"></script>
+<script>
+    // Quill Setup
+    var quill = new Quill('#editor', { theme: 'snow', placeholder: 'Type message...' });
+
+    // --- SELECTION LOGIC ---
+    function toggleAll(source) {
+        checkboxes = document.querySelectorAll('.user-checkbox');
+        for(var i=0, n=checkboxes.length;i<n;i++) {
+            checkboxes[i].checked = source.checked;
+        }
+        updateCount();
+    }
+
+    function updateCount() {
+        var selected = document.querySelectorAll('.user-checkbox:checked').length;
+        document.getElementById('countBadge').innerText = selected + " Selected";
+    }
+
+    // --- AUTO SAVE LOGIC (Purana Wala) ---
+    window.onload = function() {
+        var savedSubject = localStorage.getItem('emailSubject');
+        var savedBody = localStorage.getItem('emailBody');
+        if (savedSubject) document.getElementById('subjectInput').value = savedSubject;
+        if (savedBody) quill.clipboard.dangerouslyPasteHTML(savedBody);
+        if (savedSubject || savedBody) document.getElementById('saveStatus').innerText = "Restored draft";
+    };
+
+    function saveToLocal() {
+        localStorage.setItem('emailSubject', document.getElementById('subjectInput').value);
+        localStorage.setItem('emailBody', quill.root.innerHTML);
+        document.getElementById('saveStatus').innerText = "Saved...";
+    }
+
+    document.getElementById('subjectInput').addEventListener('input', saveToLocal);
+    quill.on('text-change', saveToLocal);
+
+    function addTag(label) {
+        const chip = `<span class="mention-chip" contenteditable="false">@${label}</span>&nbsp;`;
+        quill.clipboard.dangerouslyPasteHTML(quill.getSelection(true).index, chip);
+        saveToLocal();
+    }
+
+    document.getElementById('composeForm').onsubmit = function() {
+        // Validation: At least one recipient
+        var selected = document.querySelectorAll('.user-checkbox:checked').length;
+        if (selected === 0) {
+            alert("Please select at least one student!");
+            return false; // Stop form submission
+        }
+
+        var btn = document.querySelector('button[type="submit"]');
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Sending...';
+        btn.disabled = true;
+        document.getElementById('hiddenBody').value = quill.root.innerHTML;
+        localStorage.removeItem('emailSubject');
+        localStorage.removeItem('emailBody');
+    };
+</script>
+{% endblock %}

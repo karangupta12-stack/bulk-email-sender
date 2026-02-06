@@ -1,0 +1,22 @@
+{% if logs %}
+    <table class="table table-sm table-bordered">
+        <thead class="table-danger">
+            <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Error Reason</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for log in logs %}
+            <tr>
+                <td>{{ log.recipient_name }}</td>
+                <td>{{ log.recipient_email }}</td>
+                <td class="text-danger small">{{ log.error_message }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+{% else %}
+    <p class="text-center text-success">No failures found! All emails sent successfully.</p>
+{% endif %}

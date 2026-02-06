@@ -1,0 +1,153 @@
+{% extends 'base.html' %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>Dashboard</h2>
+    <a href="{% url 'manage_contacts' %}" class="btn btn-outline-primary position-relative">
+        <i class="bi bi-people-fill"></i> Manage Contacts
+        <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger">
+            {{ total_contacts }}
+        </span>
+    </a>
+</div>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+        <h5 class="card-title mb-3"><i class="bi bi-file-earmark-spreadsheet"></i> Upload New Excel</h5>
+        
+        <form action="{% url 'upload_excel' %}" method="POST" enctype="multipart/form-data">
+            {% csrf_token %}
+            <div class="input-group">
+                <input type="file" name="excel_file" class="form-control" id="excelInput" required accept=".xlsx, .xls">
+                <button type="submit" class="btn btn-dark">
+                    <i class="bi bi-upload"></i> Upload Now
+                </button>
+            </div>
+            <div class="form-text mt-2 text-muted">
+                <strong>Columns required:</strong> Name, College, Year, Email ID, Mobile Number, Event Name
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-header bg-white fw-bold">Recent Campaigns</div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Date & Time</th>
+                    <th>Subject</th>
+                    <th style="width: 25%;">Progress</th>
+                    <th>Status</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
+           <tbody>
+                {% for c in campaigns %}
+                <tr>
+                    <td>
+                        <div class="fw-bold">{{ c.sent_at|date:"M d, Y" }}</div>
+                        <div class="small text-muted">{{ c.sent_at|time:"h:i A" }}</div>
+                    </td>
+
+                    <td>{{ c.subject|truncatechars:30 }}</td>
+                    
+                    <td>
+                        {% with total=c.total_recipients success=c.success_count failed=c.failed_count %}
+                        <div class="d-flex justify-content-between small mb-1">
+                            <span class="text-success fw-bold">{{ success }} Sent</span>
+                            <span class="text-muted">{{ failed }} Failed</span>
+                        </div>
+                        <div class="progress" style="height: 6px;">
+                            {% widthratio success|add:failed total 100 as percent %}
+                            <div class="progress-bar {% if failed > 0 %}bg-danger{% else %}bg-success{% endif %}" 
+                                 role="progressbar" style="width: {{ percent|default:'0' }}%;">
+                            </div>
+                        </div>
+                        {% endwith %}
+                    </td>
+
+                    <td>
+                        <div onclick="showFailures('{{ c.id }}')" style="cursor: pointer;">
+                            
+                            {% if c.success_count|add:c.failed_count == c.total_recipients %}
+                                
+                                {% if c.failed_count > 0 %}
+                                    <span class="badge bg-danger">
+                                        <i class="bi bi-exclamation-circle"></i> Failed ({{ c.failed_count }})
+                                    </span>
+                                
+                                {% else %}
+                                    <span class="badge bg-success">
+                                        <i class="bi bi-check-circle"></i> Success
+                                    </span>
+                                {% endif %}
+
+                            {% else %}
+                                <span class="badge bg-warning text-dark status-badge">
+                                    <i class="bi bi-hourglass-split"></i> Processing...
+                                </span>
+                            {% endif %}
+                            
+                        </div>
+                    </td>
+
+                    <td class="text-end">
+                        <div class="btn-group">
+                            <a href="{% url 'export_report' c.id %}" class="btn btn-sm btn-outline-secondary" title="Download CSV">
+                                <i class="bi bi-download"></i>
+                            </a>
+                            <a href="{% url 'delete_campaign' c.id %}" class="btn btn-sm btn-outline-danger" 
+                               onclick="return confirm('Delete this campaign?');" title="Delete">
+                                <i class="bi bi-trash"></i>
+                            </a>
+                        </div>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="5" class="text-center p-4">No campaigns found.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="modal fade" id="failureModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title">Failed Emails</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="failureModalBody">
+                <div class="text-center"><div class="spinner-border"></div> Loading...</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // 1. Auto Refresh Logic (Sirf tab jab "Processing" ho)
+    if (document.querySelector('.status-badge')) {
+        setTimeout(() => window.location.reload(), 5000);
+    }
+
+    // 2. Fetch Failed Emails via AJAX
+    function showFailures(campaignId) {
+        var modal = new bootstrap.Modal(document.getElementById('failureModal'));
+        modal.show();
+        
+        // Data fetch karo
+        fetch(`/campaign/failed/${campaignId}/`)
+            .then(response => response.text())
+            .then(html => {
+                document.getElementById('failureModalBody').innerHTML = html;
+            })
+            .catch(error => {
+                document.getElementById('failureModalBody').innerHTML = "<p class='text-danger'>Error loading data.</p>";
+            });
+    }
+</script>
+
+{% endblock %}

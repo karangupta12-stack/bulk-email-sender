@@ -1,3 +1,4 @@
+from urllib import request
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.core.mail import EmailMultiAlternatives, get_connection
@@ -9,43 +10,62 @@ import threading
 import time
 import uuid
 import csv
+from django.core.files.storage import default_storage
+from PIL import Image, ImageDraw, ImageFont, ImageColor
+import io
+
+
+# --- CERTIFICATE GENERATION ---
+def generate_certificate(template_bytes, student_name, x, y, font_size, color_hex):
+    try:
+        img = Image.open(io.BytesIO(template_bytes))
+        draw = ImageDraw.Draw(img)
+
+        try:
+            font = ImageFont.truetype("arial.ttf", size=int(font_size))
+        except IOError:
+            try:
+                font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", size=int(font_size))
+            except IOError:
+                font = ImageFont.load_default()
+
+        text_bbox = draw.textbbox((0, 0), student_name, font=font)
+        text_width = text_bbox[2] - text_bbox[0]
+        text_height = text_bbox[3] - text_bbox[1]
+        
+        final_x = int(x) - (text_width / 2)
+        final_y = int(y) - (text_height / 2)
+
+        rgb_color = ImageColor.getrgb(color_hex)
+        draw.text((final_x, final_y), student_name, fill=rgb_color, font=font)
+
+        output_stream = io.BytesIO()
+        img.convert('RGB').save(output_stream, format='PDF') 
+        output_stream.seek(0)
+        
+        return output_stream.read()
+    except Exception as e:
+        print(f"Cert Error: {e}")
+        return None
+
 
 # --- BACKGROUND WORKER ---
-def send_bulk_emails_task(subject, body, recipients, campaign_id):
+def send_bulk_emails_task(subject, body, recipients, campaign_id, attachments=[], cert_data=None):
     try:
-        # Campaign fetch karo
         campaign = EmailCampaign.objects.get(id=campaign_id)
+        BATCH_SIZE = 50
+        SLEEP_TIME = 2
         
-        # Settings
-        BATCH_SIZE = 50   # 50 emails ka batch
-        SLEEP_TIME = 2    # 2 second rest
-        
-        # --- 1. SETUP CONTENT ---
-        # Unique ID generate (Short version for cleaner look)
         unique_id = str(uuid.uuid4()).split('-')[0]
-        
-        # Spacing Fix (Paragraph gap hatana)
-        clean_body = body.replace("<p>", "<p style='margin:0; margin-bottom:8px; line-height:1.5;'>")
+        clean_body = body.replace("<p>", "<div style='margin:0; padding:0; line-height:1.2;'>").replace("</p>", "</div>")
         clean_body = clean_body.replace("<p><br></p>", "<br>")
         
-        # --- NEW: PROFESSIONAL FOOTER (Ref No at Bottom) ---
-        footer_style = """
-        <br><br>
-        <div style="margin-top: 20px; padding-top: 10px; border-top: 1px solid #eaeaea; color: #999999; font-size: 11px; font-family: sans-serif;">
-            <p style="margin:0;">Ref ID: {uid} | This is an automated email.</p>
-        </div>
-        """
-        # Footer HTML create karo
-        email_footer = footer_style.format(uid=unique_id)
-        
-        # Body + Footer jod do
+        email_footer = f"<br><br><div style='border-top:1px solid #ddd; color:#999; font-size:11px;'>Ref ID: {unique_id}</div>"
         final_content = clean_body + email_footer
-        # ------------------------
 
         total_sent = 0
         total_failed = 0
         
-        # Batch processing logic
         chunks = [recipients[i:i + BATCH_SIZE] for i in range(0, len(recipients), BATCH_SIZE)]
 
         for chunk in chunks:
@@ -53,115 +73,144 @@ def send_bulk_emails_task(subject, body, recipients, campaign_id):
             connection.open()
             
             for recipient in chunk:
+                content = final_content
                 status = 'Failed'
                 error_msg = ''
                 
-                # IMPORTANT: Reset content for every user
-                content = final_content
-
                 try:
-                    # --- 2. REPLACEMENTS ---
-                    r_name = str(recipient.name).strip()
+                    # ✅ SABHI VARIABLES KO REPLACE KARO
+                    r_name = str(recipient.name).strip() if recipient.name else ''
                     content = content.replace('{{name}}', r_name).replace('@Name', r_name).replace('@name', r_name)
 
-                    r_college = str(recipient.college).strip()
+                    r_college = str(recipient.college).strip() if recipient.college else ''
                     content = content.replace('{{college}}', r_college).replace('@College', r_college).replace('@college', r_college)
 
-                    r_year = str(recipient.year).strip()
+                    r_year = str(recipient.year).strip() if recipient.year else ''
                     content = content.replace('{{year}}', r_year).replace('@Year', r_year).replace('@year', r_year)
 
-                    r_event = str(recipient.event_name).strip()
+                    r_event = str(recipient.event_name).strip() if recipient.event_name else ''
                     content = content.replace('{{event_name}}', r_event).replace('@Event', r_event).replace('@event', r_event)
+                    
+                    r_mobile = str(recipient.mobile).strip() if recipient.mobile else ''
+                    content = content.replace('{{mobile}}', r_mobile).replace('@Mobile', r_mobile).replace('@mobile', r_mobile)
 
-                    # --- 3. SENDING ---
                     msg = EmailMultiAlternatives(
-                        subject,
-                        content, # Plain text fallback
-                        settings.EMAIL_HOST_USER,
-                        [recipient.email],
-                        connection=connection
+                        subject, content, settings.EMAIL_HOST_USER, [recipient.email], connection=connection
                     )
                     msg.attach_alternative(content, "text/html")
+
+                    for att in attachments:
+                        msg.attach(att['name'], att['content'], att['content_type'])
+
+                    if cert_data:
+                        cert_pdf_bytes = generate_certificate(
+                            cert_data['template_bytes'],
+                            r_name,
+                            cert_data['x'],
+                            cert_data['y'],
+                            cert_data['font_size'],
+                            cert_data['color']
+                        )
+                        if cert_pdf_bytes:
+                            filename = f"Certificate_{r_name.replace(' ', '_')}.pdf"
+                            msg.attach(filename, cert_pdf_bytes, 'application/pdf')
+
                     msg.send()
-                    
                     status = 'Sent'
                     total_sent += 1
                 
                 except Exception as e:
                     error_msg = str(e)
                     total_failed += 1
-                    print(f"Failed to send to {recipient.email}: {e}")
+                    print(f"Failed: {recipient.email} - {e}")
 
-                # --- 4. LOGGING ---
                 EmailLog.objects.create(
-                    campaign=campaign,
-                    recipient_name=recipient.name,
-                    recipient_email=recipient.email,
-                    status=status,
+                    campaign=campaign, 
+                    recipient_name=recipient.name, 
+                    recipient_email=recipient.email, 
+                    status=status, 
                     error_message=error_msg
                 )
 
             connection.close()
-            
-            # Stats update
             campaign.success_count = total_sent
             campaign.failed_count = total_failed
             campaign.save()
-            
-            # Gmail Rate Limit Protection
             time.sleep(SLEEP_TIME)
 
     except Exception as e:
-        print(f"CRITICAL WORKER ERROR: {e}")
+        print(f"CRITICAL ERROR: {e}")
 
 
 # --- MAIN VIEWS ---
-
 def dashboard(request):
     total_contacts = Recipient.objects.count()
     campaigns = EmailCampaign.objects.all().order_by('-sent_at')
-    return render(request, 'dashboard.html', {'total_contacts': total_contacts, 'campaigns': campaigns})
+    return render(request, 'dashboard.html', {
+        'total_contacts': total_contacts, 
+        'campaigns': campaigns
+    })
 
-# core/views.py
 
 def compose_email(request):
-    # GET Request: Page khulte hi saare recipients bhejo taaki user select kar sake
     all_recipients = Recipient.objects.all().order_by('-id')
 
     if request.method == "POST":
         subject = request.POST.get('subject')
         body = request.POST.get('body')
-        
-        # --- NEW CHANGE: Capture Selected IDs ---
         selected_ids = request.POST.getlist('selected_ids')
         
+        attachments = request.FILES.getlist('attachments')
+        attachment_data = []
+        for f in attachments:
+            attachment_data.append({
+                'name': f.name, 
+                'content': f.read(), 
+                'content_type': f.content_type
+            })
+        
+        cert_data = None
+        cert_file = request.FILES.get('cert_template')
+        if cert_file:
+            cert_data = {
+                'template_bytes': cert_file.read(),
+                'x': request.POST.get('cert_x', 960),
+                'y': request.POST.get('cert_y', 540),
+                'font_size': request.POST.get('cert_font_size', 60),
+                'color': request.POST.get('cert_color', '#000000')
+            }
+
         if not selected_ids:
             messages.error(request, "Please select at least one recipient.")
             return render(request, 'compose.html', {'recipients': all_recipients})
             
-        # Sirf wahi recipients nikalo jinki ID list mein hai
         target_recipients = list(Recipient.objects.filter(id__in=selected_ids))
-        # ----------------------------------------
-
-        # Campaign Create
+        
         campaign = EmailCampaign.objects.create(
             subject=subject,
             body=body,
             total_recipients=len(target_recipients)
         )
 
-        # Start Thread (Background Task)
         t = threading.Thread(
             target=send_bulk_emails_task,
-            args=(subject, body, target_recipients, campaign.id)
+            args=(subject, body, target_recipients, campaign.id, attachment_data, cert_data)
         )
         t.setDaemon(True)
         t.start()
 
-        messages.success(request, f"Campaign started for {len(target_recipients)} selected students! Check Dashboard.")
+        msg = f"Campaign started for {len(target_recipients)} recipients"
+        if cert_data:
+            msg += " with certificates"
+        if attachment_data:
+            msg += f" and {len(attachment_data)} attachment(s)"
+        msg += "!"
+        
+        messages.success(request, msg)
         return redirect('dashboard')
 
     return render(request, 'compose.html', {'recipients': all_recipients})
+
 
 def upload_excel(request):
     if request.method == "POST" and request.FILES.get('excel_file'):
@@ -185,6 +234,7 @@ def upload_excel(request):
             messages.error(request, f"Error: {str(e)}")
     return redirect('dashboard')
 
+
 def export_report(request, campaign_id):
     campaign = get_object_or_404(EmailCampaign, id=campaign_id)
     response = HttpResponse(content_type='text/csv')
@@ -192,14 +242,20 @@ def export_report(request, campaign_id):
     writer = csv.writer(response)
     writer.writerow(['Recipient Name', 'Email', 'Status', 'Time', 'Error Details'])
     for log in campaign.logs.all():
-        writer.writerow([log.recipient_name, log.recipient_email, log.status, log.timestamp, log.error_message])
+        writer.writerow([
+            log.recipient_name, 
+            log.recipient_email, 
+            log.status, 
+            log.timestamp, 
+            log.error_message
+        ])
     return response
 
-# --- CONTACT MANAGEMENT VIEWS ---
 
 def manage_contacts(request):
     contacts = Recipient.objects.all().order_by('-id')
     return render(request, 'manage_contacts.html', {'contacts': contacts})
+
 
 def add_contact(request):
     if request.method == "POST":
@@ -215,6 +271,7 @@ def add_contact(request):
         return redirect('manage_contacts')
     return redirect('manage_contacts')
 
+
 def edit_contact(request, id):
     contact = get_object_or_404(Recipient, id=id)
     if request.method == "POST":
@@ -229,11 +286,13 @@ def edit_contact(request, id):
         return redirect('manage_contacts')
     return redirect('manage_contacts')
 
+
 def delete_contact(request, id):
     contact = get_object_or_404(Recipient, id=id)
     contact.delete()
     messages.success(request, "Contact deleted.")
     return redirect('manage_contacts')
+
 
 def delete_all_contacts(request):
     if request.method == "POST":
@@ -242,16 +301,15 @@ def delete_all_contacts(request):
         messages.warning(request, f"All {count} contacts deleted.")
     return redirect('manage_contacts')
 
+
 def delete_campaign(request, campaign_id):
     campaign = get_object_or_404(EmailCampaign, id=campaign_id)
     campaign.delete()
     messages.success(request, "Campaign deleted successfully.")
     return redirect('dashboard')
 
-# --- NEW: Get Failed Emails for Modal ---
+
 def get_failed_emails(request, campaign_id):
     campaign = get_object_or_404(EmailCampaign, id=campaign_id)
-    # Sirf failed logs nikalo
     failed_logs = campaign.logs.filter(status='Failed')
-    
     return render(request, 'partials/failed_list.html', {'logs': failed_logs})

@@ -17,4 +17,6 @@ urlpatterns = [
     
     path('campaign/delete/<int:campaign_id>/', views.delete_campaign, name='delete_campaign'),
     path('campaign/failed/<int:campaign_id>/', views.get_failed_emails, name='get_failed_emails'),
+    
+    path('preview-certificate/', views.preview_certificate, name='preview_certificate'),
 ]

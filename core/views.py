@@ -3,7 +3,7 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.core.mail import EmailMultiAlternatives, get_connection
 from django.conf import settings
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
 from .models import Recipient, EmailCampaign, EmailLog
 import pandas as pd
 import threading
@@ -12,23 +12,23 @@ import uuid
 import csv
 from django.core.files.storage import default_storage
 from PIL import Image, ImageDraw, ImageFont, ImageColor
-import io
+import io, base64
 
 
 # --- CERTIFICATE GENERATION ---
-def generate_certificate(template_bytes, student_name, x, y, font_size, color_hex):
+def generate_certificate(template_bytes, student_name, x, y, font_size, color_hex, output_format='PDF'):
     try:
         img = Image.open(io.BytesIO(template_bytes))
         draw = ImageDraw.Draw(img)
 
+        # Font Logic
         try:
-            font = ImageFont.truetype("arial.ttf", size=int(font_size))
+            # Linux server ke liye path adjust karna pad sakta hai
+            font = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", size=int(font_size))
         except IOError:
-            try:
-                font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", size=int(font_size))
-            except IOError:
-                font = ImageFont.load_default()
+            font = ImageFont.load_default()
 
+        # Text Centering Logic
         text_bbox = draw.textbbox((0, 0), student_name, font=font)
         text_width = text_bbox[2] - text_bbox[0]
         text_height = text_bbox[3] - text_bbox[1]
@@ -40,9 +40,14 @@ def generate_certificate(template_bytes, student_name, x, y, font_size, color_he
         draw.text((final_x, final_y), student_name, fill=rgb_color, font=font)
 
         output_stream = io.BytesIO()
-        img.convert('RGB').save(output_stream, format='PDF') 
-        output_stream.seek(0)
         
+        # --- CHANGE IS HERE: Support PNG for Preview ---
+        if output_format == 'PNG':
+            img.save(output_stream, format='PNG')
+        else:
+            img.convert('RGB').save(output_stream, format='PDF')
+            
+        output_stream.seek(0)
         return output_stream.read()
     except Exception as e:
         print(f"Cert Error: {e}")
@@ -215,24 +220,63 @@ def compose_email(request):
 def upload_excel(request):
     if request.method == "POST" and request.FILES.get('excel_file'):
         excel_file = request.FILES['excel_file']
+
         try:
             df = pd.read_excel(excel_file)
-            df.columns = [str(c).lower().strip().replace(" ", "_") for c in df.columns]
-            objs = [
-                Recipient(
-                    name=row.get('name', ''),
-                    college=row.get('college', ''),
-                    year=row.get('year', ''),
-                    email=row.get('email_id', ''),
-                    mobile=row.get('mobile_number', ''),
-                    event_name=row.get('event_name', '')
-                ) for _, row in df.iterrows()
-            ]
+
+            # 1️⃣ Normalize column names
+            df.columns = df.columns.str.strip().str.lower()
+
+            # 2️⃣ Column mapping (Excel → Model)
+            COLUMN_MAP = {
+                'name': 'name',
+
+                'email': 'email',
+                'e-mail id': 'email',
+                'email id': 'email',
+
+                'college': 'college',
+                'course': 'college',
+
+                'year': 'year',
+
+                'mobile': 'mobile',
+                'mobile no': 'mobile',
+                'mobile number': 'mobile',
+
+                'event': 'event_name',
+                'event name': 'event_name'
+            }
+
+            df = df.rename(columns=COLUMN_MAP)
+
+            # 3️⃣ Safe value function (NO nan)
+            def safe(val):
+                if pd.isna(val):
+                    return ''
+                return str(val).strip()
+
+            objs = []
+            for _, row in df.iterrows():
+                objs.append(
+                    Recipient(
+                        name=safe(row.get('name')),
+                        email=safe(row.get('email')),
+                        college=safe(row.get('college')),
+                        year=safe(row.get('year')),
+                        mobile=safe(row.get('mobile')),
+                        event_name=safe(row.get('event_name')),
+                    )
+                )
+
             Recipient.objects.bulk_create(objs)
-            messages.success(request, f"Imported {len(objs)} contacts.")
+
+            messages.success(request, f"Imported {len(objs)} contacts successfully.")
+
         except Exception as e:
-            messages.error(request, f"Error: {str(e)}")
-    return redirect('dashboard')
+            messages.error(request, f"Excel import error: {str(e)}")
+
+    return redirect('manage_contacts')
 
 
 def export_report(request, campaign_id):
@@ -313,3 +357,38 @@ def get_failed_emails(request, campaign_id):
     campaign = get_object_or_404(EmailCampaign, id=campaign_id)
     failed_logs = campaign.logs.filter(status='Failed')
     return render(request, 'partials/failed_list.html', {'logs': failed_logs})
+
+
+# core/views.py (Bottom mein add karein)
+
+def preview_certificate(request):
+    if request.method == "POST":
+        try:
+            # 1. Get Data from AJAX
+            image_file = request.FILES.get('template_file')
+            x = request.POST.get('x')
+            y = request.POST.get('y')
+            font_size = request.POST.get('font_size')
+            color = request.POST.get('color')
+            dummy_name = "Amit Kumar Sharma" # Preview ke liye sample naam
+
+            if not image_file:
+                return JsonResponse({'error': 'No image uploaded'}, status=400)
+
+            # 2. Generate Image (PNG format)
+            img_bytes = generate_certificate(
+                image_file.read(), 
+                dummy_name, 
+                x, y, font_size, color, 
+                output_format='PNG' # Important
+            )
+
+            # 3. Convert to Base64 to send back to HTML
+            img_b64 = base64.b64encode(img_bytes).decode('utf-8')
+            
+            return JsonResponse({'image': img_b64})
+        
+        except Exception as e:
+            return JsonResponse({'error': str(e)}, status=500)
+            
+    return JsonResponse({'error': 'Invalid Request'}, status=400)

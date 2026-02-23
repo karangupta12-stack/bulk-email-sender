@@ -1,12 +1,16 @@
 from django.db import models
 
 class Recipient(models.Model):
-    name = models.CharField(max_length=255)
-    college = models.CharField(max_length=255)
-    year = models.CharField(max_length=50)
-    email = models.EmailField()
-    mobile = models.CharField(max_length=20)
-    event_name = models.CharField(max_length=255)
+    name = models.CharField(max_length=255, blank=True)
+    college = models.CharField(max_length=255, blank=True)
+    year = models.CharField(max_length=50, blank=True)
+    email = models.EmailField(blank=True)
+    mobile = models.CharField(max_length=20, blank=True)
+    event_name = models.CharField(max_length=255, blank=True)
+
+    # 🔥 NEW: extra excel columns store honge yahan
+    extra_data = models.JSONField(default=dict, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

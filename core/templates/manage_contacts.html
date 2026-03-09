@@ -1,107 +1,150 @@
 {% extends 'base.html' %}
 {% block content %}
 
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <h2><a href="{% url 'dashboard' %}" class="text-decoration-none text-dark"><i class="bi bi-arrow-left"></i></a> Manage Contacts</h2>
+<div class="page-header mb-4">
     <div>
-        <form action="{% url 'delete_all_contacts' %}" method="POST" class="d-inline" onsubmit="return confirm('Are you sure you want to delete ALL contacts?');">
+        <h1 class="page-header-title">Manage Contacts</h1>
+        <p class="page-header-sub">View, search, and manage your recipient list</p>
+    </div>
+    <div class="d-flex gap-3">
+        <form method="POST" action="{% url 'delete_all_contacts' %}" onsubmit="return confirm('Are you sure you want to delete ALL contacts? This cannot be undone.');">
             {% csrf_token %}
-            <button type="submit" class="btn btn-outline-danger me-2"><i class="bi bi-trash"></i> Delete All</button>
+            <button type="submit" class="btn btn-outline-danger bg-white d-flex align-items-center gap-2" style="border-radius: 8px;">
+                <i class="bi bi-trash"></i> Delete All
+            </button>
         </form>
-        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addModal">
-            <i class="bi bi-person-plus"></i> Add New
+        <button type="button" class="btn btn-primary d-flex align-items-center gap-2" data-bs-toggle="modal" data-bs-target="#addContactModal">
+            <i class="bi bi-person-plus-fill"></i> Add New
         </button>
     </div>
 </div>
 
-<div class="card shadow-sm">
-    <div class="card-body p-0">
-        <div class="table-responsive" style="max-height: 70vh;">
-            <table class="table table-hover mb-0 align-middle">
-                <thead class="table-light sticky-top">
-                    <tr>
-                        <th>Name</th>
-                        <th>Email</th>
-                        <th>College</th>
-                        <th>Year</th>
-                        <th>Event</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for c in contacts %}
-                    <tr>
-                        <td class="fw-bold">{{ c.name }}</td>
-                        <td>{{ c.email }}</td>
-                        <td>{{ c.college }}</td>
-                        <td>{{ c.year }}</td>
-                        <td><span class="badge bg-info text-dark">{{ c.event_name }}</span></td>
-                        <td>
-                            <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editModal{{ c.id }}">
-                                <i class="bi bi-pencil"></i>
-                            </button>
-                            <a href="{% url 'delete_contact' c.id %}" class="btn btn-sm btn-outline-danger" onclick="return confirm('Delete this contact?');">
-                                <i class="bi bi-x-lg"></i>
-                            </a>
-                        </td>
-                    </tr>
-
-                    <div class="modal fade" id="editModal{{ c.id }}" tabindex="-1">
-                        <div class="modal-dialog">
-                            <div class="modal-content">
-                                <form action="{% url 'edit_contact' c.id %}" method="POST">
-                                    {% csrf_token %}
-                                    <div class="modal-header">
-                                        <h5 class="modal-title">Edit Contact</h5>
-                                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                                    </div>
-                                    <div class="modal-body">
-                                        <div class="mb-2"><label>Name</label><input type="text" name="name" value="{{ c.name }}" class="form-control" required></div>
-                                        <div class="mb-2"><label>Email</label><input type="email" name="email" value="{{ c.email }}" class="form-control" required></div>
-                                        <div class="mb-2"><label>College</label><input type="text" name="college" value="{{ c.college }}" class="form-control"></div>
-                                        <div class="mb-2"><label>Year</label><input type="text" name="year" value="{{ c.year }}" class="form-control"></div>
-                                        <div class="mb-2"><label>Mobile</label><input type="text" name="mobile" value="{{ c.mobile }}" class="form-control"></div>
-                                        <div class="mb-2"><label>Event</label><input type="text" name="event_name" value="{{ c.event_name }}" class="form-control"></div>
-                                    </div>
-                                    <div class="modal-footer">
-                                        <button type="submit" class="btn btn-primary">Save Changes</button>
-                                    </div>
-                                </form>
-                            </div>
-                        </div>
-                    </div>
-                    {% empty %}
-                    <tr><td colspan="6" class="text-center p-4">No contacts found. Upload Excel or Add New.</td></tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+<div class="card border-0 shadow-sm" style="border-radius: 16px; overflow: hidden;">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center" style="padding: 20px 24px; border-bottom: 1px solid var(--border-color);">
+        <div style="position:relative; width: 350px;">
+            <i class="bi bi-search" style="position:absolute;left:14px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-size:15px;"></i>
+            <input type="text" id="contactSearch" placeholder="Search by name, email, or college..." class="form-control" style="padding-left:40px; padding-right: 40px; border-radius: 8px;" onkeyup="searchContacts()">
+            <i class="bi bi-x-lg" id="clearSearch" style="position:absolute;right:14px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-size:14px; cursor: pointer; display: none;" onclick="clearSearchInput()"></i>
         </div>
+        <span class="badge bg-primary" style="font-size: 13px; padding: 6px 12px; border-radius: 8px;" id="totalCountBadge">{{ contacts|length }} Total Contacts</span>
+    </div>
+
+    <div class="table-responsive" style="max-height: 65vh; overflow-y: auto;">
+        <table class="table mb-0 table-hover" id="contactsTable">
+            <thead style="background: #f8fafc; position: sticky; top: 0; z-index: 1; box-shadow: 0 1px 0 var(--border-color);">
+                <tr>
+                    <th style="padding-left: 24px;">Name & Email</th>
+                    <th>College</th>
+                    <th>Year</th>
+                    <th>Event</th>
+                    <th class="text-end" style="padding-right: 24px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in contacts %}
+                <tr>
+                    <td style="padding-left: 24px;">
+                        <div style="font-weight:600;color:var(--text-main); font-size:14px;">{{ r.name }}</div>
+                        <div style="font-size:12.5px;color:var(--text-muted);">{{ r.email }}</div>
+                    </td>
+                    <td style="font-size:14px; color:var(--text-main); font-weight: 500;">{{ r.college }}</td>
+                    <td><span class="status-pill" style="background: #e0f2fe; color: #0369a1;">{{ r.year }}</span></td>
+                    <td style="font-size:13px; color:var(--text-muted);">{{ r.event_name|default:"-" }}</td>
+                    <td class="text-end" style="padding-right: 24px;">
+                        <a href="{% url 'delete_contact' r.id %}" class="btn btn-sm btn-light border text-danger" onclick="return confirm('Delete this contact?');" title="Delete">
+                            <i class="bi bi-trash"></i>
+                        </a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr id="emptyRow">
+                    <td colspan="5" class="text-center py-5">
+                        <i class="bi bi-people text-muted" style="font-size: 3rem; opacity: 0.5;"></i>
+                        <h6 class="mt-3 text-muted">No contacts found</h6>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 
-<div class="modal fade" id="addModal" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content">
+<div class="modal fade" id="addContactModal" tabindex="-1" aria-labelledby="addContactModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="border-radius: 16px; border: none; box-shadow: 0 10px 30px rgba(0,0,0,0.1);">
+            <div class="modal-header border-0 pb-0" style="padding: 24px 24px 0 24px;">
+                <h5 class="modal-title fw-bold" id="addContactModalLabel">Add New Contact</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
             <form action="{% url 'add_contact' %}" method="POST">
                 {% csrf_token %}
-                <div class="modal-header">
-                    <h5 class="modal-title">Add New Contact</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                <div class="modal-body" style="padding: 24px;">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold small text-muted">Full Name</label>
+                        <input type="text" name="name" class="form-control" required placeholder="e.g. Karan Gupta">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold small text-muted">Email Address</label>
+                        <input type="email" name="email" class="form-control" required placeholder="e.g. karan@example.com">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold small text-muted">College/University</label>
+                        <input type="text" name="college" class="form-control" placeholder="e.g. MIT">
+                    </div>
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold small text-muted">Year</label>
+                            <input type="text" name="year" class="form-control" placeholder="e.g. 1st Year">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold small text-muted">Mobile (Optional)</label>
+                            <input type="text" name="mobile" class="form-control" placeholder="e.g. 9876543210">
+                        </div>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label fw-bold small text-muted">Event Name</label>
+                        <input type="text" name="event_name" class="form-control" placeholder="e.g. Hackathon 2026">
+                    </div>
                 </div>
-                <div class="modal-body">
-                    <div class="mb-2"><label>Name</label><input type="text" name="name" class="form-control" required></div>
-                    <div class="mb-2"><label>Email</label><input type="email" name="email" class="form-control" required></div>
-                    <div class="mb-2"><label>College</label><input type="text" name="college" class="form-control"></div>
-                    <div class="mb-2"><label>Year</label><input type="text" name="year" class="form-control"></div>
-                    <div class="mb-2"><label>Mobile</label><input type="text" name="mobile" class="form-control"></div>
-                    <div class="mb-2"><label>Event</label><input type="text" name="event_name" class="form-control"></div>
-                </div>
-                <div class="modal-footer">
-                    <button type="submit" class="btn btn-success">Add Contact</button>
+                <div class="modal-footer border-0" style="padding: 0 24px 24px 24px;">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary px-4">Save Contact</button>
                 </div>
             </form>
         </div>
     </div>
 </div>
 
-{% endblock %}  
+<script>
+    // Search Functionality
+    function searchContacts() {
+        var input = document.getElementById('contactSearch');
+        var clearBtn = document.getElementById('clearSearch');
+        var filter = input.value.toLowerCase();
+        var rows = document.querySelectorAll('#contactsTable tbody tr:not(#emptyRow)');
+        var visibleCount = 0;
+
+        clearBtn.style.display = filter.length > 0 ? 'block' : 'none';
+
+        rows.forEach(row => {
+            if (row.innerText.toLowerCase().includes(filter)) {
+                row.style.display = '';
+                visibleCount++;
+            } else {
+                row.style.display = 'none';
+            }
+        });
+        
+        document.getElementById('totalCountBadge').innerText = visibleCount + " Contacts Found";
+    }
+
+    // Clear Search Functionality ('X' button click)
+    function clearSearchInput() {
+        var input = document.getElementById('contactSearch');
+        input.value = '';
+        searchContacts(); 
+        input.focus();
+        document.getElementById('totalCountBadge').innerText = "{{ contacts|length }} Total Contacts";
+    }
+</script>
+{% endblock %}

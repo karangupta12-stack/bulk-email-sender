@@ -13,7 +13,12 @@ import csv
 from django.core.files.storage import default_storage
 from PIL import Image, ImageDraw, ImageFont, ImageColor
 import io, base64
-
+from django.db.models import Sum
+import traceback
+from django.core.mail.backends.smtp import EmailBackend
+from .models import MailSettings
+import concurrent.futures
+import zipfile
 
 # --- CERTIFICATE GENERATION ---
 def generate_certificate(template_bytes, student_name, x, y, font_size, color_hex, output_format='PDF'):
@@ -54,108 +59,267 @@ def generate_certificate(template_bytes, student_name, x, y, font_size, color_he
         return None
 
 
-# --- BACKGROUND WORKER ---
+# # --- BACKGROUND WORKER ---
+# def send_bulk_emails_task(subject, body, recipients, campaign_id, attachments=[], cert_data=None):
+#     try:
+#         campaign = EmailCampaign.objects.get(id=campaign_id)
+#         BATCH_SIZE = 50
+#         SLEEP_TIME = 2
+        
+#         # --- 🔴 DATABASE SE DYNAMIC SETTINGS NIKALO ---
+#         mail_settings = MailSettings.objects.first()
+#         if not mail_settings or not mail_settings.email_user:
+#             print("ERROR: Settings page par email configure nahi hai!")
+#             return # Agar email set nahi hai toh task rok do
+
+#         # Custom Mail Engine banayein UI wali details ke sath
+#         custom_backend = EmailBackend(
+#             host=mail_settings.email_host,
+#             port=mail_settings.email_port,
+#             username=mail_settings.email_user,
+#             password=mail_settings.email_password,
+#             use_tls=mail_settings.use_tls,
+#             fail_silently=False
+#         )
+#         # ----------------------------------------------
+
+#         unique_id = str(uuid.uuid4()).split('-')[0]
+#         clean_body = body.replace("<p>", "<div style='margin:0; padding:0; line-height:1.2;'>").replace("</p>", "</div>")
+#         clean_body = clean_body.replace("<p><br></p>", "<br>")
+        
+#         email_footer = f"<br><br><div style='border-top:1px solid #ddd; color:#999; font-size:11px;'>Ref ID: {unique_id}</div>"
+#         final_content = clean_body + email_footer
+
+#         total_sent = 0
+#         total_failed = 0
+        
+#         chunks = [recipients[i:i + BATCH_SIZE] for i in range(0, len(recipients), BATCH_SIZE)]
+
+#         for chunk in chunks:
+#             # 🔴 PURANA CODE (get_connection) HATA DIYA
+#             # Ab hum apna custom database wala connection use karenge
+#             connection = custom_backend
+#             connection.open()
+            
+#             for recipient in chunk:
+#                 content = final_content
+#                 status = 'Failed'
+#                 error_msg = ''
+                
+#                 try:
+#                     # Replacements
+#                     r_name = str(recipient.name).strip() if recipient.name else ''
+#                     content = content.replace('{{name}}', r_name).replace('@Name', r_name).replace('@name', r_name)
+
+#                     r_college = str(recipient.college).strip() if recipient.college else ''
+#                     content = content.replace('{{college}}', r_college).replace('@College', r_college).replace('@college', r_college)
+
+#                     r_year = str(recipient.year).strip() if recipient.year else ''
+#                     content = content.replace('{{year}}', r_year).replace('@Year', r_year).replace('@year', r_year)
+
+#                     r_event = str(recipient.event_name).strip() if recipient.event_name else ''
+#                     content = content.replace('{{event_name}}', r_event).replace('@Event', r_event).replace('@event', r_event)
+                    
+#                     r_mobile = str(recipient.mobile).strip() if recipient.mobile else ''
+#                     content = content.replace('{{mobile}}', r_mobile).replace('@Mobile', r_mobile).replace('@mobile', r_mobile)
+
+#                     # 🔴 YAHAN BHI CHANGE KIYA: settings.EMAIL_HOST_USER ki jagah mail_settings.email_user lagaya
+#                     msg = EmailMultiAlternatives(
+#                         subject, content, mail_settings.email_user, [recipient.email], connection=connection
+#                     )
+#                     msg.attach_alternative(content, "text/html")
+
+#                     for att in attachments:
+#                         msg.attach(att['name'], att['content'], att['content_type'])
+
+#                     if cert_data:
+#                         cert_pdf_bytes = generate_certificate(
+#                             cert_data['template_bytes'],
+#                             r_name,
+#                             cert_data['x'],
+#                             cert_data['y'],
+#                             cert_data['font_size'],
+#                             cert_data['color']
+#                         )
+#                         if cert_pdf_bytes:
+#                             filename = f"Certificate_{r_name.replace(' ', '_')}.pdf"
+#                             msg.attach(filename, cert_pdf_bytes, 'application/pdf')
+
+#                     msg.send()
+#                     status = 'Sent'
+#                     total_sent += 1
+                
+#                 except Exception as e:
+#                     error_msg = str(e)
+#                     total_failed += 1
+#                     print(f"Failed: {recipient.email} - {e}")
+
+#                 EmailLog.objects.create(
+#                     campaign=campaign, 
+#                     recipient_name=recipient.name, 
+#                     recipient_email=recipient.email, 
+#                     status=status, 
+#                     error_message=error_msg
+#                 )
+
+#             connection.close()
+#             campaign.success_count = total_sent
+#             campaign.failed_count = total_failed
+#             campaign.save()
+#             time.sleep(SLEEP_TIME)
+
+#     except Exception as e:
+#         print(f"CRITICAL ERROR: {e}")
+
+def process_email_batch(batch, subject, final_content, attachments, cert_data, mail_settings, campaign):
+    # Har thread (worker) ka apna alag connection hoga taaki speed fast ho
+    custom_backend = EmailBackend(
+        host=mail_settings.email_host,
+        port=mail_settings.email_port,
+        username=mail_settings.email_user,
+        password=mail_settings.email_password,
+        use_tls=mail_settings.use_tls,
+        fail_silently=False
+    )
+    custom_backend.open()
+    
+    success_count = 0
+    failed_count = 0
+    logs_to_save = [] # Database entries yahan collect hongi
+
+    for recipient in batch:
+        content = final_content
+        status = 'Failed'
+        error_msg = ''
+        
+        try:
+            # Replacements
+            r_name = str(recipient.name).strip() if recipient.name else ''
+            content = content.replace('{{name}}', r_name).replace('@Name', r_name).replace('@name', r_name)
+
+            r_college = str(recipient.college).strip() if recipient.college else ''
+            content = content.replace('{{college}}', r_college).replace('@College', r_college).replace('@college', r_college)
+
+            r_year = str(recipient.year).strip() if recipient.year else ''
+            content = content.replace('{{year}}', r_year).replace('@Year', r_year).replace('@year', r_year)
+
+            r_event = str(recipient.event_name).strip() if recipient.event_name else ''
+            content = content.replace('{{event_name}}', r_event).replace('@Event', r_event).replace('@event', r_event)
+            
+            r_mobile = str(recipient.mobile).strip() if recipient.mobile else ''
+            content = content.replace('{{mobile}}', r_mobile).replace('@Mobile', r_mobile).replace('@mobile', r_mobile)
+
+            msg = EmailMultiAlternatives(
+                subject, content, mail_settings.email_user, [recipient.email], connection=custom_backend
+            )
+            msg.attach_alternative(content, "text/html")
+
+            # Attachments
+            for att in attachments:
+                msg.attach(att['name'], att['content'], att['content_type'])
+
+            # Certificate Generation
+            if cert_data:
+                cert_pdf_bytes = generate_certificate(
+                    cert_data['template_bytes'], r_name, cert_data['x'], cert_data['y'], cert_data['font_size'], cert_data['color']
+                )
+                if cert_pdf_bytes:
+                    filename = f"Certificate_{r_name.replace(' ', '_')}.pdf"
+                    msg.attach(filename, cert_pdf_bytes, 'application/pdf')
+
+            # Send Mail
+            msg.send()
+            status = 'Sent'
+            success_count += 1
+        
+        except Exception as e:
+            error_msg = str(e)
+            failed_count += 1
+            print(f"Failed: {recipient.email} - {e}")
+
+        # Database hit se bachne ke liye list mein save kar rahe hain
+        logs_to_save.append(EmailLog(
+            campaign=campaign, 
+            recipient_name=recipient.name, 
+            recipient_email=recipient.email, 
+            status=status, 
+            error_message=error_msg
+        ))
+
+    custom_backend.close()
+    return success_count, failed_count, logs_to_save
+
+
+# ---------------------------------------------------------
+# MAIN TASK: Ye function Multi-Threading chalu karega
+# ---------------------------------------------------------
 def send_bulk_emails_task(subject, body, recipients, campaign_id, attachments=[], cert_data=None):
     try:
         campaign = EmailCampaign.objects.get(id=campaign_id)
-        BATCH_SIZE = 50
-        SLEEP_TIME = 2
+        BATCH_SIZE = 20  # Ek chunk mein 20 emails
         
+        mail_settings = MailSettings.objects.first()
+        if not mail_settings or not mail_settings.email_user:
+            print("ERROR: Settings page par email configure nahi hai!")
+            return
+
         unique_id = str(uuid.uuid4()).split('-')[0]
         clean_body = body.replace("<p>", "<div style='margin:0; padding:0; line-height:1.2;'>").replace("</p>", "</div>")
         clean_body = clean_body.replace("<p><br></p>", "<br>")
-        
         email_footer = f"<br><br><div style='border-top:1px solid #ddd; color:#999; font-size:11px;'>Ref ID: {unique_id}</div>"
         final_content = clean_body + email_footer
 
         total_sent = 0
         total_failed = 0
+        all_logs = []
         
+        # Recipients ko batches mein todo
         chunks = [recipients[i:i + BATCH_SIZE] for i in range(0, len(recipients), BATCH_SIZE)]
 
-        for chunk in chunks:
-            connection = get_connection()
-            connection.open()
+        # 🔥 MAGIC HAPPENS HERE: Multi-Threading (4 workers ek sath kaam karenge)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            futures = []
+            for chunk in chunks:
+                # 4 workers ko alag-alag batches de do
+                futures.append(executor.submit(
+                    process_email_batch, chunk, subject, final_content, attachments, cert_data, mail_settings, campaign
+                ))
             
-            for recipient in chunk:
-                content = final_content
-                status = 'Failed'
-                error_msg = ''
-                
-                try:
-                    # ✅ SABHI VARIABLES KO REPLACE KARO
-                    r_name = str(recipient.name).strip() if recipient.name else ''
-                    content = content.replace('{{name}}', r_name).replace('@Name', r_name).replace('@name', r_name)
+            # Jaise-jaise batches complete honge, result collect karo
+            for future in concurrent.futures.as_completed(futures):
+                s_count, f_count, logs = future.result()
+                total_sent += s_count
+                total_failed += f_count
+                all_logs.extend(logs) # Saare logs ek badi list mein jod lo
 
-                    r_college = str(recipient.college).strip() if recipient.college else ''
-                    content = content.replace('{{college}}', r_college).replace('@College', r_college).replace('@college', r_college)
+        # 🔥 DATABASE MAGIC: 1000 logs ko bhi sirf 1 second mein save kar dega!
+        EmailLog.objects.bulk_create(all_logs)
 
-                    r_year = str(recipient.year).strip() if recipient.year else ''
-                    content = content.replace('{{year}}', r_year).replace('@Year', r_year).replace('@year', r_year)
-
-                    r_event = str(recipient.event_name).strip() if recipient.event_name else ''
-                    content = content.replace('{{event_name}}', r_event).replace('@Event', r_event).replace('@event', r_event)
-                    
-                    r_mobile = str(recipient.mobile).strip() if recipient.mobile else ''
-                    content = content.replace('{{mobile}}', r_mobile).replace('@Mobile', r_mobile).replace('@mobile', r_mobile)
-
-                    msg = EmailMultiAlternatives(
-                        subject, content, settings.EMAIL_HOST_USER, [recipient.email], connection=connection
-                    )
-                    msg.attach_alternative(content, "text/html")
-
-                    for att in attachments:
-                        msg.attach(att['name'], att['content'], att['content_type'])
-
-                    if cert_data:
-                        cert_pdf_bytes = generate_certificate(
-                            cert_data['template_bytes'],
-                            r_name,
-                            cert_data['x'],
-                            cert_data['y'],
-                            cert_data['font_size'],
-                            cert_data['color']
-                        )
-                        if cert_pdf_bytes:
-                            filename = f"Certificate_{r_name.replace(' ', '_')}.pdf"
-                            msg.attach(filename, cert_pdf_bytes, 'application/pdf')
-
-                    msg.send()
-                    status = 'Sent'
-                    total_sent += 1
-                
-                except Exception as e:
-                    error_msg = str(e)
-                    total_failed += 1
-                    print(f"Failed: {recipient.email} - {e}")
-
-                EmailLog.objects.create(
-                    campaign=campaign, 
-                    recipient_name=recipient.name, 
-                    recipient_email=recipient.email, 
-                    status=status, 
-                    error_message=error_msg
-                )
-
-            connection.close()
-            campaign.success_count = total_sent
-            campaign.failed_count = total_failed
-            campaign.save()
-            time.sleep(SLEEP_TIME)
+        # Update Campaign final stats
+        campaign.success_count = total_sent
+        campaign.failed_count = total_failed
+        campaign.save()
 
     except Exception as e:
+        import traceback
         print(f"CRITICAL ERROR: {e}")
-
+        traceback.print_exc()
 
 # --- MAIN VIEWS ---
 def dashboard(request):
     total_contacts = Recipient.objects.count()
     campaigns = EmailCampaign.objects.all().order_by('-sent_at')
+    
+    # Ye 2 lines missing thi dashboard mein
+    total_sent = campaigns.aggregate(Sum('success_count'))['success_count__sum'] or 0
+    total_failed = campaigns.aggregate(Sum('failed_count'))['failed_count__sum'] or 0
+
     return render(request, 'dashboard.html', {
         'total_contacts': total_contacts, 
-        'campaigns': campaigns
+        'campaigns': campaigns,
+        'total_sent': total_sent,
+        'total_failed': total_failed
     })
-
 
 def compose_email(request):
     all_recipients = Recipient.objects.all().order_by('-id')
@@ -165,14 +329,29 @@ def compose_email(request):
         body = request.POST.get('body')
         selected_ids = request.POST.getlist('selected_ids')
         
-        attachments = request.FILES.getlist('attachments')
+        # ---------------------------------------------------------
+        # 🔥 SMART AUTO-ZIP ATTACHMENT LOGIC (Speed up upload)
+        # ---------------------------------------------------------
+        raw_attachments = request.FILES.getlist('attachments')
         attachment_data = []
-        for f in attachments:
+        
+        # Agar 1 se zyada files hain, toh unki ZIP file bana do
+        if len(raw_attachments) > 1:
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                for f in raw_attachments:
+                    zip_file.writestr(f.name, f.read())
+            
             attachment_data.append({
-                'name': f.name, 
-                'content': f.read(), 
-                'content_type': f.content_type
+                'name': 'All_Attachments.zip',
+                'content': zip_buffer.getvalue(),
+                'content_type': 'application/zip'
             })
+        else:
+            # Agar sirf 1 file hai toh normally attach karo (bina zip ke)
+            for f in raw_attachments:
+                attachment_data.append({'name': f.name, 'content': f.read(), 'content_type': f.content_type})
+        # ---------------------------------------------------------
         
         cert_data = None
         cert_file = request.FILES.get('cert_template')
@@ -208,7 +387,7 @@ def compose_email(request):
         if cert_data:
             msg += " with certificates"
         if attachment_data:
-            msg += f" and {len(attachment_data)} attachment(s)"
+            msg += f" and attachments"
         msg += "!"
         
         messages.success(request, msg)
@@ -362,33 +541,165 @@ def get_failed_emails(request, campaign_id):
 # core/views.py (Bottom mein add karein)
 
 def preview_certificate(request):
-    if request.method == "POST":
+    if request.method == "POST" and request.FILES.get('cert_template'):
         try:
-            # 1. Get Data from AJAX
-            image_file = request.FILES.get('template_file')
-            x = request.POST.get('x')
-            y = request.POST.get('y')
-            font_size = request.POST.get('font_size')
-            color = request.POST.get('color')
-            dummy_name = "Amit Kumar Sharma" # Preview ke liye sample naam
-
-            if not image_file:
-                return JsonResponse({'error': 'No image uploaded'}, status=400)
-
-            # 2. Generate Image (PNG format)
-            img_bytes = generate_certificate(
-                image_file.read(), 
-                dummy_name, 
-                x, y, font_size, color, 
-                output_format='PNG' # Important
-            )
-
-            # 3. Convert to Base64 to send back to HTML
-            img_b64 = base64.b64encode(img_bytes).decode('utf-8')
+            image_file = request.FILES['cert_template']
+            x = float(request.POST.get('x', 960))
+            y = float(request.POST.get('y', 540))
+            font_size = int(request.POST.get('font_size', 60))
+            color = request.POST.get('color', '#000000')
             
-            return JsonResponse({'image': img_b64})
-        
+            img = Image.open(image_file)
+            draw = ImageDraw.Draw(img)
+            
+            # Font Loading
+            try:
+                font = ImageFont.truetype("arial.ttf", size=font_size)
+            except Exception:
+                font = ImageFont.load_default()
+                
+            dummy_text = "Amit Kumar Sharma"
+            
+            # Position Calculation (Supports both Old and New Pillow versions)
+            try:
+                text_bbox = draw.textbbox((0, 0), dummy_text, font=font)
+                text_width = text_bbox[2] - text_bbox[0]
+                text_height = text_bbox[3] - text_bbox[1]
+            except AttributeError:
+                # Fallback for older versions
+                text_width, text_height = draw.textsize(dummy_text, font=font)
+                
+            final_x = x - (text_width / 2)
+            final_y = y - (text_height / 2)
+            
+            draw.text((final_x, final_y), dummy_text, fill=color, font=font)
+            
+            buffered = io.BytesIO()
+            img.save(buffered, format="PNG")
+            img_str = base64.b64encode(buffered.getvalue()).decode('utf-8')
+            
+            return JsonResponse({'status': 'success', 'image': img_str})
+            
         except Exception as e:
-            return JsonResponse({'error': str(e)}, status=500)
+            print(traceback.format_exc()) # Terminal mein exact error dikhega
+            return JsonResponse({'status': 'error', 'message': f"Processing Error: {str(e)}"})
             
-    return JsonResponse({'error': 'Invalid Request'}, status=400)
+    return JsonResponse({'status': 'error', 'message': 'No image uploaded'})
+
+
+def sent_mails(request):
+    campaigns = EmailCampaign.objects.all().order_by('-sent_at')
+    
+    total_campaigns = campaigns.count()
+    total_sent = campaigns.aggregate(Sum('success_count'))['success_count__sum'] or 0
+    total_failed = campaigns.aggregate(Sum('failed_count'))['failed_count__sum'] or 0
+    total_recipients = campaigns.aggregate(Sum('total_recipients'))['total_recipients__sum'] or 0
+
+    return render(request, 'sent_mails.html', {
+        'campaigns': campaigns,
+        'total_campaigns': total_campaigns,
+        'total_sent': total_sent,
+        'total_failed': total_failed,
+        'total_recipients': total_recipients
+    })
+
+def analytics(request):
+    campaigns = EmailCampaign.objects.all().order_by('-sent_at')
+    
+    total_campaigns = campaigns.count()
+    total_sent = campaigns.aggregate(Sum('success_count'))['success_count__sum'] or 0
+    total_failed = campaigns.aggregate(Sum('failed_count'))['failed_count__sum'] or 0
+    
+    total_emails = total_sent + total_failed
+    success_rate = round((total_sent / total_emails * 100) if total_emails > 0 else 0)
+
+    # Chart Data (Last 5 Campaigns)
+    recent_camps = campaigns[:5][::-1] # Reverse to show oldest to newest on chart
+    chart_labels = [c.sent_at.strftime("%b %d") for c in recent_camps]
+    chart_sent = [c.success_count for c in recent_camps]
+    chart_failed = [c.failed_count for c in recent_camps]
+
+    return render(request, 'analytics.html', {
+        'campaigns': campaigns,
+        'total_campaigns': total_campaigns,
+        'total_sent': total_sent,
+        'total_failed': total_failed,
+        'success_rate': success_rate,
+        'chart_labels': chart_labels,
+        'chart_sent': chart_sent,
+        'chart_failed': chart_failed
+    })
+
+def settings_page(request):
+    # Dummy logic: You can connect this to a Settings Model later
+    context = {
+        'current_host': settings.EMAIL_HOST,
+        'current_port': settings.EMAIL_PORT,
+        'current_user': settings.EMAIL_HOST_USER,
+    }
+    return render(request, 'settings_page.html', context)
+
+def save_settings(request):
+    # Settings save logic yahan aayega (e.g. Save to DB or .env)
+    messages.success(request, "Settings updated successfully!")
+    return redirect('settings_page')
+
+from django.http import JsonResponse
+def test_email_connection(request):
+    try:
+        connection = get_connection()
+        connection.open()
+        connection.close()
+        return JsonResponse({'success': True})
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)})
+    
+def settings_page(request):
+    # Database se pehli setting uthao (Agar nahi hai toh blank object banega)
+    mail_settings = MailSettings.objects.first()
+    
+    context = {
+        'settings': mail_settings,
+        'current_host': mail_settings.email_host if mail_settings else 'Not Set',
+        'current_port': mail_settings.email_port if mail_settings else 'Not Set',
+        'current_user': mail_settings.email_user if mail_settings else 'Not Set',
+    }
+    return render(request, 'settings_page.html', context)
+
+def save_settings(request):
+    if request.method == "POST":
+        # Hamesha ek hi record rakhenge (id=1)
+        settings_obj, created = MailSettings.objects.get_or_create(id=1)
+        
+        settings_obj.email_host = request.POST.get('email_host', 'smtp.gmail.com')
+        settings_obj.email_port = request.POST.get('email_port', 587)
+        settings_obj.email_user = request.POST.get('email_user', '')
+        settings_obj.email_password = request.POST.get('email_password', '')
+        settings_obj.use_tls = request.POST.get('use_tls') == 'True'
+        
+        settings_obj.save()
+        messages.success(request, "Email Configuration Saved Successfully!")
+        
+    return redirect('settings_page')
+
+def test_email_connection(request):
+    try:
+        mail_settings = MailSettings.objects.first()
+        if not mail_settings or not mail_settings.email_user:
+            return JsonResponse({'success': False, 'error': 'Please save settings first!'})
+
+        # Custom Backend Connection banayenge UI wali details se
+        backend = EmailBackend(
+            host=mail_settings.email_host,
+            port=mail_settings.email_port,
+            username=mail_settings.email_user,
+            password=mail_settings.email_password,
+            use_tls=mail_settings.use_tls,
+            fail_silently=False
+        )
+        # Check connection
+        backend.open()
+        backend.close()
+        return JsonResponse({'success': True})
+    except Exception as e:
+        return JsonResponse({'success': False, 'error': str(e)})

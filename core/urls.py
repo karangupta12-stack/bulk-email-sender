@@ -19,4 +19,10 @@ urlpatterns = [
     path('campaign/failed/<int:campaign_id>/', views.get_failed_emails, name='get_failed_emails'),
     
     path('preview-certificate/', views.preview_certificate, name='preview_certificate'),
+    
+    path('sent-mails/', views.sent_mails, name='sent_mails'),
+    path('analytics/', views.analytics, name='analytics'),
+    path('settings/', views.settings_page, name='settings_page'),
+    path('settings/save/', views.save_settings, name='save_settings'),
+    path('settings/test/', views.test_email_connection, name='test_email_connection'),
 ]

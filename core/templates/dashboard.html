@@ -1,153 +1,183 @@
 {% extends 'base.html' %}
 {% block content %}
 
+<style>
+    /* Dashboard specific styling */
+    .dash-title { font-size: 28px; font-weight: 700; color: var(--text-main); margin-bottom: 4px; }
+    .dash-subtitle { font-size: 14px; color: var(--text-muted); }
+    
+    .card-custom {
+        background: white; border: 1px solid var(--border-color); border-radius: 16px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.02); padding: 24px;
+    }
+    
+    .kpi-box { display: flex; flex-direction: column; }
+    .kpi-icon-wrap {
+        width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 18px; margin-bottom: 16px;
+    }
+    .kpi-number { font-size: 32px; font-weight: 700; color: var(--text-main); line-height: 1; margin-bottom: 8px; }
+    .kpi-label { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+
+    /* Icons Colors */
+    .icon-blue { background: #eef2ff; color: #4f46e5; }
+    .icon-purple { background: #f3e8ff; color: #9333ea; }
+    .icon-green { background: #dcfce3; color: #10b981; }
+    .icon-red { background: #fee2e2; color: #ef4444; }
+
+    /* Upload Box */
+    .upload-container { background: white; border: 1px solid var(--border-color); border-radius: 16px; padding: 24px; }
+    .upload-title { font-size: 15px; font-weight: 600; margin-bottom: 20px; display: flex; align-items: center; gap: 8px; }
+    .custom-file-input { border: 1px solid var(--border-color); border-radius: 8px; padding: 8px 12px; font-size: 14px; width: 100%; color: var(--text-muted); }
+    .btn-upload { background: var(--primary-blue); color: white; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 500; font-size: 14px; width: 100%; }
+    
+    /* Table Styling */
+    .table-container { background: white; border: 1px solid var(--border-color); border-radius: 16px; overflow: hidden; }
+    .table-header { padding: 20px 24px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); }
+    .table-header h5 { font-size: 16px; font-weight: 700; margin: 0; }
+    .table-header a { font-size: 13px; color: var(--primary-blue); text-decoration: none; font-weight: 500; }
+    
+    .table th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); font-weight: 600; border-bottom: 1px solid var(--border-color); padding: 12px 24px; background: #f8fafc; }
+    .table td { padding: 16px 24px; vertical-align: middle; border-bottom: 1px solid var(--border-color); font-size: 14px; }
+    
+    /* Status Pills */
+    .pill { padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; }
+    .pill-success { background: #dcfce3; color: #166534; }
+    .pill-warning { background: #fef3c7; color: #92400e; }
+    
+    .action-btn { background: white; border: 1px solid var(--border-color); color: var(--text-muted); padding: 6px 10px; border-radius: 6px; transition: 0.2s; }
+    .action-btn:hover { background: #f1f5f9; color: var(--text-main); }
+    .action-btn.delete:hover { background: #fee2e2; color: #ef4444; border-color: #fca5a5; }
+</style>
+
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h2>Dashboard</h2>
-    <a href="{% url 'manage_contacts' %}" class="btn btn-outline-primary position-relative">
-        <i class="bi bi-people-fill"></i> Manage Contacts
-        <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger">
-            {{ total_contacts }}
-        </span>
+    <div>
+        <h1 class="dash-title">Dashboard</h1>
+        <p class="dash-subtitle">Welcome back — here's what's happening with your campaigns</p>
+    </div>
+    <a href="{% url 'manage_contacts' %}" class="btn bg-white border d-flex align-items-center gap-2" style="border-radius: 8px; font-size: 14px; font-weight: 500;">
+        <i class="bi bi-people"></i> Manage Contacts 
+        <span class="badge" style="background: var(--primary-blue); border-radius: 6px;">{{ total_contacts }}</span>
     </a>
 </div>
 
-<div class="card shadow-sm mb-4">
-    <div class="card-body">
-        <h5 class="card-title mb-3"><i class="bi bi-file-earmark-spreadsheet"></i> Upload New Excel</h5>
-        
-        <form action="{% url 'upload_excel' %}" method="POST" enctype="multipart/form-data">
-            {% csrf_token %}
-            <div class="input-group">
-                <input type="file" name="excel_file" class="form-control" id="excelInput" required accept=".xlsx, .xls">
-                <button type="submit" class="btn btn-dark">
-                    <i class="bi bi-upload"></i> Upload Now
-                </button>
-            </div>
-            <div class="form-text mt-2 text-muted">
-                <strong>Columns required:</strong> Name, College, Year, Email ID, Mobile Number, Event Name
-            </div>
-        </form>
+<div class="row g-4 mb-4">
+    <div class="col-md-3">
+        <div class="card-custom kpi-box">
+            <div class="kpi-icon-wrap icon-blue"><i class="bi bi-people-fill"></i></div>
+            <div class="kpi-number">{{ total_contacts }}</div>
+            <div class="kpi-label">Total Contacts</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card-custom kpi-box">
+            <div class="kpi-icon-wrap icon-purple"><i class="bi bi-send-fill"></i></div>
+            <div class="kpi-number">{{ campaigns|length }}</div>
+            <div class="kpi-label">Total Campaigns</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card-custom kpi-box">
+            <div class="kpi-icon-wrap icon-green"><i class="bi bi-check-circle-fill"></i></div>
+            <div class="kpi-number">{{ total_sent|default:"0" }}</div>
+            <div class="kpi-label">Emails Delivered</div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card-custom kpi-box">
+            <div class="kpi-icon-wrap icon-red"><i class="bi bi-x-circle-fill"></i></div>
+            <div class="kpi-number">{{ total_failed|default:"0" }}</div>
+            <div class="kpi-label">Failed</div>
+        </div>
     </div>
 </div>
 
-<div class="card shadow-sm">
-    <div class="card-header bg-white fw-bold">Recent Campaigns</div>
+<div class="upload-container mb-4">
+    <div class="upload-title"><i class="bi bi-file-earmark-spreadsheet" style="color:var(--primary-blue);"></i> Upload Recipients via Excel</div>
+    <form action="{% url 'upload_excel' %}" method="POST" enctype="multipart/form-data">
+        {% csrf_token %}
+        <div class="row align-items-center g-3">
+            <div class="col-md-8">
+                <label style="font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 6px;">Excel File (.xlsx / .xls)</label>
+                <input type="file" name="excel_file" class="custom-file-input" required accept=".xlsx, .xls">
+            </div>
+            <div class="col-md-4 d-flex align-items-end">
+                <button type="submit" class="btn-upload" style="margin-top: 24px;">
+                    <i class="bi bi-upload me-2"></i> Upload Now
+                </button>
+            </div>
+        </div>
+        <div class="mt-3" style="font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 6px;">
+            <i class="bi bi-info-circle text-primary"></i> Required columns: Name, College, Year, Email ID, Mobile Number, Event Name
+        </div>
+    </form>
+</div>
+
+<div class="table-container">
+    <div class="table-header">
+        <h5>Recent Campaigns</h5>
+        <a href="{% url 'sent_mails' %}">View all &rarr;</a>
+    </div>
     <div class="table-responsive">
-        <table class="table table-hover align-middle mb-0">
-            <thead class="table-light">
+        <table class="table mb-0">
+            <thead>
                 <tr>
-                    <th>Date & Time</th>
+                    <th>Date</th>
                     <th>Subject</th>
-                    <th style="width: 25%;">Progress</th>
+                    <th>Delivery</th>
                     <th>Status</th>
                     <th class="text-end">Actions</th>
                 </tr>
             </thead>
-           <tbody>
-                {% for c in campaigns %}
+            <tbody>
+                {% for c in campaigns|slice:":5" %}
                 <tr>
                     <td>
-                        <div class="fw-bold">{{ c.sent_at|date:"M d, Y" }}</div>
-                        <div class="small text-muted">{{ c.sent_at|time:"h:i A" }}</div>
+                        <div style="font-weight: 600; color: var(--text-main);">{{ c.sent_at|date:"M d, Y" }}</div>
+                        <div style="font-size: 12px; color: var(--text-muted);">{{ c.sent_at|time:"h:i A" }}</div>
                     </td>
-
-                    <td>{{ c.subject|truncatechars:30 }}</td>
-                    
                     <td>
+                        <div style="font-weight: 600; color: var(--text-main);">{{ c.subject|truncatechars:40 }}</div>
+                        <div style="font-size: 12px; color: var(--text-muted);">{{ c.total_recipients }} recipients</div>
+                    </td>
+                    <td style="width: 250px;">
                         {% with total=c.total_recipients success=c.success_count failed=c.failed_count %}
-                        <div class="d-flex justify-content-between small mb-1">
-                            <span class="text-success fw-bold">{{ success }} Sent</span>
-                            <span class="text-muted">{{ failed }} Failed</span>
+                        <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:6px; font-weight: 500;">
+                            <span style="color:#10b981;">{{ success }} sent</span>
+                            <span style="color:var(--text-muted);">{{ failed }} failed</span>
                         </div>
-                        <div class="progress" style="height: 6px;">
-                            {% widthratio success|add:failed total 100 as percent %}
-                            <div class="progress-bar {% if failed > 0 %}bg-danger{% else %}bg-success{% endif %}" 
-                                 role="progressbar" style="width: {{ percent|default:'0' }}%;">
-                            </div>
+                        <div style="background:#f1f5f9; border-radius:10px; height:6px; overflow:hidden;">
+                            {% widthratio success|add:failed total 100 as pct %}
+                            <div style="height:100%; width:{{ pct|default:0 }}%; background:#10b981; border-radius:10px;"></div>
                         </div>
                         {% endwith %}
                     </td>
-
                     <td>
-                        <div onclick="showFailures('{{ c.id }}')" style="cursor: pointer;">
-                            
-                            {% if c.success_count|add:c.failed_count == c.total_recipients %}
-                                
-                                {% if c.failed_count > 0 %}
-                                    <span class="badge bg-danger">
-                                        <i class="bi bi-exclamation-circle"></i> Failed ({{ c.failed_count }})
-                                    </span>
-                                
-                                {% else %}
-                                    <span class="badge bg-success">
-                                        <i class="bi bi-check-circle"></i> Success
-                                    </span>
-                                {% endif %}
-
-                            {% else %}
-                                <span class="badge bg-warning text-dark status-badge">
-                                    <i class="bi bi-hourglass-split"></i> Processing...
-                                </span>
-                            {% endif %}
-                            
-                        </div>
+                        {% if c.success_count|add:c.failed_count == c.total_recipients %}
+                            <span class="pill pill-success"><i class="bi bi-check-circle-fill"></i> Delivered</span>
+                        {% else %}
+                            <span class="pill pill-warning status-badge"><i class="bi bi-arrow-repeat"></i> Processing...</span>
+                        {% endif %}
                     </td>
-
                     <td class="text-end">
-                        <div class="btn-group">
-                            <a href="{% url 'export_report' c.id %}" class="btn btn-sm btn-outline-secondary" title="Download CSV">
-                                <i class="bi bi-download"></i>
-                            </a>
-                            <a href="{% url 'delete_campaign' c.id %}" class="btn btn-sm btn-outline-danger" 
-                               onclick="return confirm('Delete this campaign?');" title="Delete">
-                                <i class="bi bi-trash"></i>
-                            </a>
-                        </div>
+                        <a href="{% url 'export_report' c.id %}" class="action-btn text-decoration-none" title="Download Report" data-turbo="false"><i class="bi bi-download"></i></a>
+                        <a href="{% url 'delete_campaign' c.id %}" class="action-btn delete text-decoration-none ms-1" onclick="return confirm('Delete campaign?');" title="Delete"><i class="bi bi-trash"></i></a>
                     </td>
                 </tr>
                 {% empty %}
-                <tr><td colspan="5" class="text-center p-4">No campaigns found.</td></tr>
+                <tr><td colspan="5" class="text-center py-5 text-muted">No campaigns launched yet.</td></tr>
                 {% endfor %}
             </tbody>
         </table>
     </div>
 </div>
 
-<div class="modal fade" id="failureModal" tabindex="-1">
-    <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-            <div class="modal-header bg-danger text-white">
-                <h5 class="modal-title">Failed Emails</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body" id="failureModalBody">
-                <div class="text-center"><div class="spinner-border"></div> Loading...</div>
-            </div>
-        </div>
-    </div>
-</div>
-
 <script>
-    // 1. Auto Refresh Logic (Sirf tab jab "Processing" ho)
+    // Agar koi campaign processing hai, to background mein page reload hoga without flashing
     if (document.querySelector('.status-badge')) {
-        setTimeout(() => window.location.reload(), 5000);
-    }
-
-    // 2. Fetch Failed Emails via AJAX
-    function showFailures(campaignId) {
-        var modal = new bootstrap.Modal(document.getElementById('failureModal'));
-        modal.show();
-        
-        // Data fetch karo
-        fetch(`/campaign/failed/${campaignId}/`)
-            .then(response => response.text())
-            .then(html => {
-                document.getElementById('failureModalBody').innerHTML = html;
-            })
-            .catch(error => {
-                document.getElementById('failureModalBody').innerHTML = "<p class='text-danger'>Error loading data.</p>";
-            });
+        setTimeout(() => {
+            // Turbo makes the reload seamless and invisible
+            window.Turbo.visit(window.location.href, { action: "replace" });
+        }, 5000);
     }
 </script>
-
 {% endblock %}

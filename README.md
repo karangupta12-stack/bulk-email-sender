@@ -191,15 +191,7 @@ Reports can be exported as CSV from:
 /export/<campaign_id>/
 ```
 
-## GitHub README Visibility
 
-GitHub automatically displays this file on the repository homepage because it is named `README.md` and placed in the repository root. After committing and pushing it, it will be visible on GitHub.
-
-```bash
-git add README.md
-git commit -m "Add professional project README"
-git push
-```
 
 ## Security Notes
 

@@ -1,3 +1,4 @@
+import re
 from urllib import request
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
@@ -19,6 +20,8 @@ from django.core.mail.backends.smtp import EmailBackend
 from .models import MailSettings
 import concurrent.futures
 import zipfile
+from django.db import connection as db_conn
+
 
 # --- CERTIFICATE GENERATION ---
 def generate_certificate(template_bytes, student_name, x, y, font_size, color_hex, output_format='PDF'):
@@ -59,120 +62,10 @@ def generate_certificate(template_bytes, student_name, x, y, font_size, color_he
         return None
 
 
-# # --- BACKGROUND WORKER ---
-# def send_bulk_emails_task(subject, body, recipients, campaign_id, attachments=[], cert_data=None):
-#     try:
-#         campaign = EmailCampaign.objects.get(id=campaign_id)
-#         BATCH_SIZE = 50
-#         SLEEP_TIME = 2
-        
-#         # --- 🔴 DATABASE SE DYNAMIC SETTINGS NIKALO ---
-#         mail_settings = MailSettings.objects.first()
-#         if not mail_settings or not mail_settings.email_user:
-#             print("ERROR: Settings page par email configure nahi hai!")
-#             return # Agar email set nahi hai toh task rok do
-
-#         # Custom Mail Engine banayein UI wali details ke sath
-#         custom_backend = EmailBackend(
-#             host=mail_settings.email_host,
-#             port=mail_settings.email_port,
-#             username=mail_settings.email_user,
-#             password=mail_settings.email_password,
-#             use_tls=mail_settings.use_tls,
-#             fail_silently=False
-#         )
-#         # ----------------------------------------------
-
-#         unique_id = str(uuid.uuid4()).split('-')[0]
-#         clean_body = body.replace("<p>", "<div style='margin:0; padding:0; line-height:1.2;'>").replace("</p>", "</div>")
-#         clean_body = clean_body.replace("<p><br></p>", "<br>")
-        
-#         email_footer = f"<br><br><div style='border-top:1px solid #ddd; color:#999; font-size:11px;'>Ref ID: {unique_id}</div>"
-#         final_content = clean_body + email_footer
-
-#         total_sent = 0
-#         total_failed = 0
-        
-#         chunks = [recipients[i:i + BATCH_SIZE] for i in range(0, len(recipients), BATCH_SIZE)]
-
-#         for chunk in chunks:
-#             # 🔴 PURANA CODE (get_connection) HATA DIYA
-#             # Ab hum apna custom database wala connection use karenge
-#             connection = custom_backend
-#             connection.open()
-            
-#             for recipient in chunk:
-#                 content = final_content
-#                 status = 'Failed'
-#                 error_msg = ''
-                
-#                 try:
-#                     # Replacements
-#                     r_name = str(recipient.name).strip() if recipient.name else ''
-#                     content = content.replace('{{name}}', r_name).replace('@Name', r_name).replace('@name', r_name)
-
-#                     r_college = str(recipient.college).strip() if recipient.college else ''
-#                     content = content.replace('{{college}}', r_college).replace('@College', r_college).replace('@college', r_college)
-
-#                     r_year = str(recipient.year).strip() if recipient.year else ''
-#                     content = content.replace('{{year}}', r_year).replace('@Year', r_year).replace('@year', r_year)
-
-#                     r_event = str(recipient.event_name).strip() if recipient.event_name else ''
-#                     content = content.replace('{{event_name}}', r_event).replace('@Event', r_event).replace('@event', r_event)
-                    
-#                     r_mobile = str(recipient.mobile).strip() if recipient.mobile else ''
-#                     content = content.replace('{{mobile}}', r_mobile).replace('@Mobile', r_mobile).replace('@mobile', r_mobile)
-
-#                     # 🔴 YAHAN BHI CHANGE KIYA: settings.EMAIL_HOST_USER ki jagah mail_settings.email_user lagaya
-#                     msg = EmailMultiAlternatives(
-#                         subject, content, mail_settings.email_user, [recipient.email], connection=connection
-#                     )
-#                     msg.attach_alternative(content, "text/html")
-
-#                     for att in attachments:
-#                         msg.attach(att['name'], att['content'], att['content_type'])
-
-#                     if cert_data:
-#                         cert_pdf_bytes = generate_certificate(
-#                             cert_data['template_bytes'],
-#                             r_name,
-#                             cert_data['x'],
-#                             cert_data['y'],
-#                             cert_data['font_size'],
-#                             cert_data['color']
-#                         )
-#                         if cert_pdf_bytes:
-#                             filename = f"Certificate_{r_name.replace(' ', '_')}.pdf"
-#                             msg.attach(filename, cert_pdf_bytes, 'application/pdf')
-
-#                     msg.send()
-#                     status = 'Sent'
-#                     total_sent += 1
-                
-#                 except Exception as e:
-#                     error_msg = str(e)
-#                     total_failed += 1
-#                     print(f"Failed: {recipient.email} - {e}")
-
-#                 EmailLog.objects.create(
-#                     campaign=campaign, 
-#                     recipient_name=recipient.name, 
-#                     recipient_email=recipient.email, 
-#                     status=status, 
-#                     error_message=error_msg
-#                 )
-
-#             connection.close()
-#             campaign.success_count = total_sent
-#             campaign.failed_count = total_failed
-#             campaign.save()
-#             time.sleep(SLEEP_TIME)
-
-#     except Exception as e:
-#         print(f"CRITICAL ERROR: {e}")
 
 def process_email_batch(batch, subject, final_content, attachments, cert_data, mail_settings, campaign):
-    # Har thread (worker) ka apna alag connection hoga taaki speed fast ho
+    from django.db import connection as db_conn
+    
     custom_backend = EmailBackend(
         host=mail_settings.email_host,
         port=mail_settings.email_port,
@@ -185,7 +78,7 @@ def process_email_batch(batch, subject, final_content, attachments, cert_data, m
     
     success_count = 0
     failed_count = 0
-    logs_to_save = [] # Database entries yahan collect hongi
+    logs_to_save = []
 
     for recipient in batch:
         content = final_content
@@ -193,7 +86,6 @@ def process_email_batch(batch, subject, final_content, attachments, cert_data, m
         error_msg = ''
         
         try:
-            # Replacements
             r_name = str(recipient.name).strip() if recipient.name else ''
             content = content.replace('{{name}}', r_name).replace('@Name', r_name).replace('@name', r_name)
 
@@ -209,25 +101,25 @@ def process_email_batch(batch, subject, final_content, attachments, cert_data, m
             r_mobile = str(recipient.mobile).strip() if recipient.mobile else ''
             content = content.replace('{{mobile}}', r_mobile).replace('@Mobile', r_mobile).replace('@mobile', r_mobile)
 
+            plain_text = re.sub(r'<[^>]+>', '', content)
             msg = EmailMultiAlternatives(
-                subject, content, mail_settings.email_user, [recipient.email], connection=custom_backend
+                subject, plain_text, mail_settings.email_user,
+                [recipient.email], connection=custom_backend
             )
             msg.attach_alternative(content, "text/html")
 
-            # Attachments
             for att in attachments:
                 msg.attach(att['name'], att['content'], att['content_type'])
 
-            # Certificate Generation
             if cert_data:
                 cert_pdf_bytes = generate_certificate(
-                    cert_data['template_bytes'], r_name, cert_data['x'], cert_data['y'], cert_data['font_size'], cert_data['color']
+                    cert_data['template_bytes'], r_name, cert_data['x'],
+                    cert_data['y'], cert_data['font_size'], cert_data['color']
                 )
                 if cert_pdf_bytes:
                     filename = f"Certificate_{r_name.replace(' ', '_')}.pdf"
                     msg.attach(filename, cert_pdf_bytes, 'application/pdf')
 
-            # Send Mail
             msg.send()
             status = 'Sent'
             success_count += 1
@@ -237,7 +129,6 @@ def process_email_batch(batch, subject, final_content, attachments, cert_data, m
             failed_count += 1
             print(f"Failed: {recipient.email} - {e}")
 
-        # Database hit se bachne ke liye list mein save kar rahe hain
         logs_to_save.append(EmailLog(
             campaign=campaign, 
             recipient_name=recipient.name, 
@@ -247,8 +138,17 @@ def process_email_batch(batch, subject, final_content, attachments, cert_data, m
         ))
 
     custom_backend.close()
-    return success_count, failed_count, logs_to_save
-
+    
+    # ✅ Batch complete hone pe turant DB save karo
+    EmailLog.objects.bulk_create(logs_to_save)
+    
+    # ✅ Thread ka DB connection free karo
+    try:
+        db_conn.close()
+    except:
+        pass
+    
+    return success_count, failed_count
 
 # ---------------------------------------------------------
 # MAIN TASK: Ye function Multi-Threading chalu karega
@@ -256,7 +156,7 @@ def process_email_batch(batch, subject, final_content, attachments, cert_data, m
 def send_bulk_emails_task(subject, body, recipients, campaign_id, attachments=[], cert_data=None):
     try:
         campaign = EmailCampaign.objects.get(id=campaign_id)
-        BATCH_SIZE = 20  # Ek chunk mein 20 emails
+        BATCH_SIZE = 10  # Ek chunk mein 20 emails
         
         mail_settings = MailSettings.objects.first()
         if not mail_settings or not mail_settings.email_user:
@@ -277,7 +177,7 @@ def send_bulk_emails_task(subject, body, recipients, campaign_id, attachments=[]
         chunks = [recipients[i:i + BATCH_SIZE] for i in range(0, len(recipients), BATCH_SIZE)]
 
         # 🔥 MAGIC HAPPENS HERE: Multi-Threading (4 workers ek sath kaam karenge)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             futures = []
             for chunk in chunks:
                 # 4 workers ko alag-alag batches de do
@@ -287,13 +187,14 @@ def send_bulk_emails_task(subject, body, recipients, campaign_id, attachments=[]
             
             # Jaise-jaise batches complete honge, result collect karo
             for future in concurrent.futures.as_completed(futures):
-                s_count, f_count, logs = future.result()
+                # s_count, f_count, logs = future.result()
+                s_count, f_count = future.result()
                 total_sent += s_count
                 total_failed += f_count
-                all_logs.extend(logs) # Saare logs ek badi list mein jod lo
+                # all_logs.extend(logs) # Saare logs ek badi list mein jod lo
 
         # 🔥 DATABASE MAGIC: 1000 logs ko bhi sirf 1 second mein save kar dega!
-        EmailLog.objects.bulk_create(all_logs)
+        EmailLog.objects.bulk_create(all_logs)  
 
         # Update Campaign final stats
         campaign.success_count = total_sent
@@ -695,7 +596,8 @@ def test_email_connection(request):
             username=mail_settings.email_user,
             password=mail_settings.email_password,
             use_tls=mail_settings.use_tls,
-            fail_silently=False
+            fail_silently=False,
+            timeout=10
         )
         # Check connection
         backend.open()

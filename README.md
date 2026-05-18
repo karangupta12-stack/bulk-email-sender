@@ -191,8 +191,6 @@ Reports can be exported as CSV from:
 /export/<campaign_id>/
 ```
 
-
-
 ## Security Notes
 
 - Do not commit `.env` or real credentials.
@@ -203,4 +201,6 @@ Reports can be exported as CSV from:
 
 ## License
 
-Add your preferred license before publishing this project publicly.
+This project is licensed under the MIT License.
+
+Copyright (c) 2026 Karan Gupta.

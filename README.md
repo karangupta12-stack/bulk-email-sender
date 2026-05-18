@@ -212,13 +212,7 @@ Reports can be exported as CSV from:
 /export/<campaign_id>/
 ```
 
-## Security Notes
 
-- Do not commit `.env` or real credentials.
-- Use a strong `SECRET_KEY` in production.
-- Keep `DEBUG=False` in production.
-- Add your production domain to `ALLOWED_HOSTS`.
-- Use Gmail app passwords or a dedicated SMTP provider.
 
 ## License
 

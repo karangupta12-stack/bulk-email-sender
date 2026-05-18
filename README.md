@@ -1,6 +1,27 @@
 # Dynamic Bulk Email Sender
 
+![Django](https://img.shields.io/badge/Django-092E20?style=for-the-badge&logo=django&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
+![Bootstrap](https://img.shields.io/badge/Bootstrap-7952B3?style=for-the-badge&logo=bootstrap&logoColor=white)
+![MIT License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
+
 A Django-based bulk email management system for sending personalized email campaigns to imported contact lists. It supports Excel uploads, recipient selection, SMTP configuration, HTML email composition, attachments, certificate generation, campaign analytics, and delivery logs.
+
+<table>
+  <tr>
+    <td><strong>Purpose</strong></td>
+    <td>Personalized bulk email campaigns for events, colleges, teams, and contact databases.</td>
+  </tr>
+  <tr>
+    <td><strong>Status</strong></td>
+    <td>Production-ready local Django application with PostgreSQL and SMTP support.</td>
+  </tr>
+  <tr>
+    <td><strong>Core Flow</strong></td>
+    <td>Import contacts, compose email, select recipients, send campaign, review analytics.</td>
+  </tr>
+</table>
 
 ## Features
 
